@@ -310,7 +310,7 @@ code.k{background:#F0F2F7; padding:2px 6px; border-radius:5px; font-size:12px; c
 /* =========================================================
    MULTIPAY — Système interne (100% local, hors-ligne)
    ========================================================= */
-const VERSION='2026.09.22';
+const VERSION='2026.09.23';
 const LOGO = (s=34)=>`<svg width="${s}" height="${s}" viewBox="0 0 44 44" fill="none" aria-label="Multipay">
 <defs><linearGradient id="mpg${s}" x1="4" y1="40" x2="40" y2="4">
 <stop offset="0" stop-color="#00D392"/><stop offset="1" stop-color="#6C5CE7"/></linearGradient></defs>
@@ -3307,7 +3307,8 @@ function vCredits(){
   <div class="card" style="margin-bottom:14px"><div class="card-h"><h3>${
     VUE_CREDIT==='bancaire'?'Crédits bancaires':VUE_CREDIT==='prive'?'Emprunts auprès de personnes':
     VUE_CREDIT==='pret'?'Prêts accordés par Multipay':'Crédits, emprunts et prêts'}</h3><div class="sp">
-    ${can('finance')?`<button class="btn btn-primary btn-sm" onclick="formCredit()">+ Nouveau crédit / emprunt</button>`
+    ${can('finance')?`<button class="btn btn-primary btn-sm" onclick="formCredit()">+ Nouveau crédit / emprunt</button>
+      <button class="btn btn-ghost btn-sm" onclick="verifierEncaissements()">Vérifier les encaissements</button>`
       :`<span class="mini">Saisie réservée à la direction financière.</span>`}</div></div>
     <div class="tbl-wrap">${list.length?`<table><thead><tr><th>Intitulé</th><th>Type</th><th>Prêteur / banque</th><th class="n">Capital</th>
       <th class="n">Dont caisse</th><th class="n">Dont matériel</th>
@@ -3433,8 +3434,27 @@ function formCredit(id){
     if(checked('kGen')){ const n=genererEcheances(cr); toast(n+' échéance(s) générée(s)'); }
     // les fonds reçus alimentent la Caisse Totale, une seule fois
     const dest=val('kCompte');
-    const aEncaisser=partEncaissee(cr);
-    if(dest && cr.type!=='pret' && aEncaisser>0 && !DB.paiements.some(x=>x.type==='financement' && x.refId===cr.id)){
+    // Encaissement : seule la part fonds de roulement entre en caisse.
+    // À la modification, l'encaissement déjà enregistré est recalculé, jamais laissé au montant total.
+    const aEncaisser = cr.type==='pret' ? 0 : partEncaissee(cr);
+    const existant = DB.paiements.find(x=>x.type==='financement' && x.refId===cr.id);
+    if(existant){
+      if(aEncaisser<=0 || !dest){
+        DB.paiements=DB.paiements.filter(x=>x.id!==existant.id);
+        DB.tombstones.push({coll:'paiements', id:existant.id, at:new Date().toISOString()});
+        toast('Ce crédit n\'alimente plus la Caisse Totale','no');
+      } else if(Math.abs(N(existant.montant)-aEncaisser)>0.005 || dest!==(existant.banqueId?'b:'+existant.banqueId:'c:'+existant.caisseId)){
+        const av=N(existant.montant);
+        existant.montant=aEncaisser;
+        existant.date=cr.dateDebut||existant.date;
+        existant.banqueId=dest.startsWith('b:')?dest.slice(2):'';
+        existant.caisseId=dest.startsWith('c:')?dest.slice(2):'';
+        existant.note=(cr.type==='prive'?'Emprunt reçu de ':'Crédit débloqué par ')+(cr.preteur||cr.banque||'');
+        log('Encaissement du crédit corrigé', cr.intitule+' : '+fmt(av,0)+' → '+fmt(aEncaisser,0));
+        toast('Encaissement corrigé : '+fmt(aEncaisser,0)+' TND en caisse'
+          +(partMaterielle(cr)>0? ' · '+fmt(partMaterielle(cr),0)+' TND au matériel, hors caisse':''));
+      }
+    } else if(dest && aEncaisser>0){
       DB.paiements.push({id:uid('pay'), type:'financement', refId:cr.id, sens:'entree', montant:aEncaisser,
         date:cr.dateDebut||today(), mode:cr.moyenReception||'Virement',
         banqueId:dest.startsWith('b:')?dest.slice(2):'', caisseId:dest.startsWith('c:')?dest.slice(2):'',
@@ -3483,6 +3503,31 @@ function calcCredit(){
         <div class="row" style="justify-content:space-between"><b>Écart avec le montant du crédit</b>
           <b class="num ${Math.abs(ecart)<0.5?'pos':'neg'}">${Math.abs(ecart)<0.5?'aucun':fmt(ecart)+' TND'}</b></div>
         ${Math.abs(ecart)>=0.5?`<div class="mini neg" style="margin-top:4px">La somme des deux parts doit correspondre au montant total du crédit.</div>`:''}`;})()}`;
+}
+/* Recale les encaissements des crédits déjà enregistrés sur leur part fonds de roulement. */
+function verifierEncaissements(){
+  const L=DB.credits.filter(c=>c.type!=='pret').map(c=>{
+    const p=DB.paiements.find(x=>x.type==='financement' && x.refId===c.id);
+    return {c, p, attendu:partEncaissee(c), actuel:p?N(p.montant):0};
+  }).filter(x=>x.p && Math.abs(x.actuel-x.attendu)>0.005);
+  if(!L.length) return toast('Tous les encaissements sont conformes');
+  modal('Encaissements à corriger',`
+    <p style="margin-top:0; font-size:13.4px">Ces crédits ont été encaissés pour leur montant total alors qu'une part
+      est affectée au matériel. Seule la part fonds de roulement doit figurer dans la Caisse Totale.</p>
+    <div class="tbl-wrap"><table><thead><tr><th>Crédit</th><th class="n">Montant total</th>
+      <th class="n">Actuellement en caisse</th><th class="n">Devrait être</th><th class="n">Écart</th></tr></thead><tbody>
+      ${L.map(x=>`<tr><td><b>${esc(x.c.intitule)}</b><div class="mini">${esc(x.c.preteur||x.c.banque||'')}</div></td>
+        <td class="n">${fmt(x.c.montant,0)}</td><td class="n neg">${fmt(x.actuel,0)}</td>
+        <td class="n pos">${fmt(x.attendu,0)}</td>
+        <td class="n"><b>${fmt(x.attendu-x.actuel,0)}</b></td></tr>`).join('')}
+    </tbody></table></div>
+    <div class="mini" style="margin-top:12px">La Caisse Totale sera recalculée de ${fmt(L.reduce((s2,x)=>s2+(x.attendu-x.actuel),0),0)} TND.
+      Le montant total emprunté reste inchangé dans Crédits et emprunts.</div>
+  `,'Corriger', ()=>{
+    L.forEach(x=>{ x.p.montant=x.attendu; x.p.maj=new Date().toISOString(); });
+    log('Encaissements de crédits recalés', L.length+' crédit(s)');
+    save(); closeModal(); toast(L.length+' encaissement(s) corrigé(s)'); go(VIEW,CUR);
+  }, true);
 }
 function voirCredit(id){
   const c=DB.credits.find(x=>x.id===id); if(!c) return;
