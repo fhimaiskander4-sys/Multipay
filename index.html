@@ -310,7 +310,7 @@ code.k{background:#F0F2F7; padding:2px 6px; border-radius:5px; font-size:12px; c
 /* =========================================================
    MULTIPAY — Système interne (100% local, hors-ligne)
    ========================================================= */
-const VERSION='2026.09.23';
+const VERSION='2026.09.24';
 const LOGO = (s=34)=>`<svg width="${s}" height="${s}" viewBox="0 0 44 44" fill="none" aria-label="Multipay">
 <defs><linearGradient id="mpg${s}" x1="4" y1="40" x2="40" y2="4">
 <stop offset="0" stop-color="#00D392"/><stop offset="1" stop-color="#6C5CE7"/></linearGradient></defs>
@@ -1558,6 +1558,7 @@ const MENU=[
   {g:'Direction', items:[
     {id:'rapports', ic:'▧', t:'Rapports', mod:'dashboard'},
     {id:'associes', ic:'♟', t:'Associés & capital', mod:'associes'},
+    {id:'avant', ic:'⧗', t:'Avant création', mod:'admin'},
     {id:'contribution', ic:'★', t:'Contribution historique', mod:'admin'},
     {id:'valorisation', ic:'◆', t:'Valeur de la société', mod:'valorisation'},
     {id:'admin', ic:'⚙', t:'Sécurité & suivi', mod:'admin'},
@@ -3331,6 +3332,7 @@ function vCredits(){
           ${retard?`<div class="mini neg">${retard} échéance(s) en retard</div>`:''}</td>
         <td class="n" style="white-space:nowrap">
           <button class="btn btn-ghost btn-sm" onclick="voirCredit('${c.id}')">Détail</button>
+          ${can('finance')&&c.type!=='pret'?`<button class="btn btn-ghost btn-sm" onclick="provisionner('${c.id}')">Provisionner</button>`:''}
           <button class="btn btn-ghost btn-sm" onclick="voirEcheancier('${c.id}')">Tranches</button>
           ${can('finance')?`<button class="btn btn-mint btn-sm" onclick="formPaiement('credit','${c.id}')">Payer</button>
           <button class="btn btn-ghost btn-sm" onclick="formCredit('${c.id}')">Modifier</button>
@@ -3665,6 +3667,7 @@ function voirEcheancier(id){
   const c=DB.credits.find(x=>x.id===id); const E=echeancesDe('credit',id);
   modal('Échéancier — '+c.intitule, `
     ${can('finance')?`<div class="row" style="margin-bottom:14px">
+      <button class="btn btn-mint btn-sm" onclick="provisionner('${id}')">Régler plusieurs mois d'avance</button>
       <button class="btn btn-primary btn-sm" onclick="definirTranches('${id}')">Définir les tranches convenues</button>
       <button class="btn btn-ghost btn-sm" onclick="ajouterEcheance('${id}')">+ Ajouter une échéance</button>
       ${c.modeEcheancier!=='libre'?`<button class="btn btn-ghost btn-sm" onclick="regenererEcheancier('${id}')">Régénérer l'échéancier automatique</button>`:''}
@@ -4460,6 +4463,166 @@ function apercuCaisse(prefixe){
 }
 
 
+
+/* =========================================================
+   AVANT CRÉATION — tout ce qu'Iskander a mobilisé avant l'ouverture
+   ========================================================= */
+function estAvant(d){ return periodeDe(d)==='avant'; }
+function operationsAvant(){
+  const dep=DB.charges.filter(c=>chargeReelle(c) && estAvant(c.date))
+    .map(c=>({t:'depense', id:c.id, coll:'charges', date:c.date, lib:c.libelle, cat:c.categorie, mt:N(c.ht)}));
+  const rev=DB.revenus.filter(r=>estAvant(r.date))
+    .map(r=>({t:'revenu', id:r.id, coll:'revenus', date:r.date, lib:r.libelle, cat:r.type, mt:N(r.ht)}));
+  const ap=DB.apports.filter(a=>estAvant(a.date))
+    .map(a=>({t:'apport', id:a.id, coll:'apports', date:a.date, lib:a.nature||'Apport personnel',
+      cat:(DB.associes.find(x=>x.id===a.associeId)||{}).nom||'', mt:N(a.montant)}));
+  const emp=DB.credits.filter(c=>c.type!=='pret' && estAvant(c.dateDebut))
+    .map(c=>({t:'emprunt', id:c.id, coll:'credits', date:c.dateDebut, lib:c.intitule,
+      cat:c.preteur||c.banque||'', mt:N(c.montant), reste:resteCredit(c)}));
+  const L=dep.concat(rev,ap,emp).sort((a,b)=>(b.date||'').localeCompare(a.date||''));
+  const som=t=>L.filter(x=>x.t===t).reduce((s,x)=>s+x.mt,0);
+  return {L, depenses:som('depense'), revenus:som('revenu'), apports:som('apport'), emprunts:som('emprunt'),
+    resteEmprunts:L.filter(x=>x.t==='emprunt').reduce((s,x)=>s+N(x.reste),0),
+    contribution: som('depense')+som('apport')+som('emprunt')+som('revenu')};
+}
+const LIB_AVANT={depense:['Dépense financée','t-red'], revenu:['Revenu encaissé','t-green'],
+  apport:['Argent personnel apporté','t-violet'], emprunt:['Emprunt mobilisé','t-amber']};
+function vAvant(){
+  if(!isCEO()) return `<div class="card"><div class="empty"><b>Accès réservé</b>
+    Cette vue est réservée à la direction générale.</div></div>`;
+  const A=operationsAvant(), f=associeFondateur();
+  const dc=DB.societe.dateCreation;
+  return `<div class="card" style="margin-bottom:14px; background:linear-gradient(135deg,#0F1830,#1B2A55); border:0; color:#fff">
+    <div class="card-b">
+      <div style="font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:#8CA0C6">Avant la création de la société</div>
+      <div style="font-size:36px;font-weight:800;letter-spacing:-.04em;margin:6px 0" class="num">${fmt(A.contribution,0)}
+        <span style="font-size:18px;color:#8CA0C6">TND mobilisés par ${esc(f.nom)}</span></div>
+      <p style="color:#C3CDE2; font-size:13.2px; margin:0; max-width:660px">Sur cette période, tout l'argent qui a fait
+        fonctionner l'activité venait de ${esc(f.nom)} : ses fonds propres, les emprunts qu'il a contractés, les revenus
+        qu'il a encaissés, et les dépenses qu'il a réglées de sa poche. Chaque ligne saisie ici alimente sa part,
+        sans qu'il ait à le déclarer opération par opération.</p>
+      <div class="row" style="gap:26px; margin-top:16px; flex-wrap:wrap">
+        <div><div class="mini" style="color:#8CA0C6">Dépenses financées</div><b class="num" style="font-size:18px">${fmt(A.depenses,0)}</b></div>
+        <div><div class="mini" style="color:#8CA0C6">Argent personnel</div><b class="num" style="font-size:18px">${fmt(A.apports,0)}</b></div>
+        <div><div class="mini" style="color:#8CA0C6">Emprunts mobilisés</div><b class="num" style="font-size:18px">${fmt(A.emprunts,0)}</b></div>
+        <div><div class="mini" style="color:#8CA0C6">Revenus encaissés</div><b class="num" style="font-size:18px">${fmt(A.revenus,0)}</b></div>
+        <div><div class="mini" style="color:#8CA0C6">Reste dû sur ces emprunts</div>
+          <b class="num" style="font-size:18px; color:#FF6B7A">${fmt(A.resteEmprunts,0)}</b></div>
+      </div>
+    </div></div>
+
+  <div class="toolbar">
+    <button class="btn btn-primary btn-sm" onclick="formAvant('depense')">+ Dépense payée avant</button>
+    <button class="btn btn-primary btn-sm" onclick="formAvant('apport')">+ Argent personnel</button>
+    <button class="btn btn-primary btn-sm" onclick="formAvant('emprunt')">+ Emprunt contracté</button>
+    <button class="btn btn-ghost btn-sm" onclick="formAvant('revenu')">+ Revenu encaissé</button>
+    <span class="mini">${dc? 'Société créée le '+dt(dc) : 'Date de création non renseignée — à saisir dans Sécurité & suivi'}</span>
+  </div>
+
+  <div class="card" style="margin-bottom:14px"><div class="card-h"><h3>Opérations avant création</h3>
+    <div class="sp"><span class="mini">${A.L.length} opération(s)</span></div></div>
+    <div class="tbl-wrap">${A.L.length?`<table><thead><tr><th>Date</th><th>Nature</th><th>Libellé</th>
+      <th>Détail</th><th class="n">Montant</th><th class="n">Reste dû</th><th></th></tr></thead><tbody>
+      ${A.L.map(x=>`<tr><td>${dt(x.date)}</td>
+        <td><span class="tag ${LIB_AVANT[x.t][1]}">${LIB_AVANT[x.t][0]}</span></td>
+        <td><b>${esc(x.lib)}</b></td><td class="mini">${esc(x.cat||'')}</td>
+        <td class="n"><b>${fmt(x.mt,0)}</b></td>
+        <td class="n">${x.t==='emprunt'? `<span class="${N(x.reste)?'neg':'pos'}">${fmt(x.reste,0)}</span>` : '—'}</td>
+        <td class="n">${x.t==='emprunt'
+          ? `<button class="btn btn-ghost btn-sm" onclick="voirCredit('${x.id}')">Détail</button>`
+          : `<button class="btn btn-danger btn-sm" onclick="delRec('${x.coll}','${x.id}','Supprimer cette opération ?')">×</button>`}</td></tr>`).join('')}
+    </tbody></table>`:`<div class="empty"><b>Aucune opération enregistrée</b>
+      Saisissez ici ce qui a été payé, apporté ou emprunté avant l'ouverture officielle. Tout alimente automatiquement la part du fondateur.</div>`}</div></div>
+
+  <div class="card"><div class="card-h"><h3>Ce que devient cet historique</h3></div><div class="card-b">
+    <div class="ai-line" style="border-color:var(--card-line); color:var(--txt)"><span class="dot d-violet"></span>
+      <span style="flex:1">Les <b>${fmt(A.contribution,0)} TND</b> mobilisés restent définitivement inscrits à la part de ${esc(f.nom)},
+        même après remboursement des emprunts.</span></div>
+    <div class="ai-line" style="border-color:var(--card-line); color:var(--txt)"><span class="dot d-amber"></span>
+      <span style="flex:1">Les <b>${fmt(A.resteEmprunts,0)} TND</b> encore dus sont une dette de la société, remboursée
+        depuis la Caisse Totale après création. Ces remboursements ne diminuent jamais sa part.</span></div>
+    <div class="ai-line" style="border-color:var(--card-line); color:var(--txt)"><span class="dot d-blue"></span>
+      <span style="flex:1">Les dépenses d'avant création n'entament pas la trésorerie actuelle : elles ont été réglées
+        avant l'ouverture des comptes.</span></div>
+    <button class="btn btn-ghost btn-sm" style="margin-top:10px" onclick="go('contribution')">Voir la contribution consolidée</button>
+  </div></div>`;
+}
+function formAvant(type){
+  const dc=DB.societe.dateCreation;
+  const dparDefaut = dc? new Date(new Date(dc).getTime()-30*864e5).toISOString().slice(0,10) : '2025-09-01';
+  const comptes=DB.banques.map(b=>({v:'b:'+b.id,l:'Banque — '+b.nom}))
+    .concat(DB.caisses.map(c=>({v:'c:'+c.id,l:'Caisse — '+c.nom})));
+  const titres={depense:'Dépense payée avant la création', apport:'Argent personnel apporté avant la création',
+    emprunt:'Emprunt contracté avant la création', revenu:'Revenu encaissé avant la création'};
+  modal(titres[type],`
+    <div class="mini" style="background:#F7F5FF; border:1px solid #E0D9FB; border-radius:10px; padding:11px 13px; margin-bottom:14px">
+      ${type==='depense'? 'Le montant est réputé avoir été financé par le fondateur : il s\'ajoute à sa part et n\'entame pas la trésorerie actuelle.'
+      : type==='apport'? 'Argent propre du fondateur, injecté dans l\'activité avant l\'ouverture.'
+      : type==='emprunt'? 'L\'emprunt s\'ajoute à sa part et reste une dette à rembourser depuis la Caisse Totale. Le remboursement ne diminuera pas sa part.'
+      : 'Recette encaissée avant la création, portée à sa part.'}
+    </div>
+    <div class="fg2">
+      <div class="field"><label>Libellé *</label><input id="avLib" placeholder="${
+        type==='depense'?'Achat de matériel, frais de constitution…'
+        :type==='apport'?'Apport personnel en numéraire'
+        :type==='emprunt'?'Emprunt auprès de M. …':'Prestation encaissée'}"></div>
+      <div class="field"><label>Montant (TND) *</label><input id="avMt" type="number" step="0.001"></div>
+    </div>
+    <div class="fg2">
+      <div class="field"><label>Date *</label><input id="avDate" type="date" value="${dparDefaut}"></div>
+      ${type==='depense'? `<div class="field"><label>Catégorie</label><select id="avCat">
+        ${categoriesSociete().map(x=>`<option>${esc(x.nom)}</option>`).join('')}</select></div>`
+      : type==='emprunt'? `<div class="field"><label>Prêteur</label><input id="avTiers" placeholder="Nom de la personne ou de la banque"></div>`
+      : `<div class="field"><label>Nature</label><input id="avCat" value="${type==='apport'?'Apport en numéraire':'Prestation'}"></div>`}
+    </div>
+    ${type==='emprunt'? `<div class="fg3">
+      <div class="field"><label>Type de prêteur</label><select id="avType">
+        <option value="prive">Personne physique ou morale</option>
+        <option value="bancaire">Banque</option></select></div>
+      <div class="field"><label>Déjà remboursé à ce jour</label><input id="avRegle" type="number" step="0.001" value="0"></div>
+      <div class="field"><label>Durée restante (années)</label><input id="avDuree" type="number" value="1"></div>
+    </div>
+    <div class="mini">Vous pourrez ensuite définir l'échéancier depuis Crédits et emprunts.</div>`:''}
+    ${type==='apport'? `<div class="field"><label>Destination des fonds</label><select id="avDest">
+      <option value="">— Non affecté (avant ouverture des comptes) —</option>
+      ${comptes.map(c=>`<option value="${c.v}">${esc(c.l)}</option>`).join('')}</select>
+      <div class="mini" style="margin-top:5px">Laissez « non affecté » si l'argent a servi avant l'ouverture des comptes bancaires.</div></div>`:''}
+    <div class="field"><label>Note</label><input id="avNote"></div>
+  `,'Enregistrer', ()=>{
+    const lib=val('avLib'), mt=N(val('avMt')), d=val('avDate');
+    if(!lib||!mt||!d) return toast('Libellé, montant et date sont obligatoires','no');
+    if(dc && d>=dc) return toast('Cette date est postérieure à la création de la société','no');
+    const f=associeFondateur();
+    if(type==='depense'){
+      DB.charges.push({id:uid('h'), libelle:lib, categorie:val('avCat')||'Divers', sousCategorie:'', projetId:'',
+        date:d, ht:mt, tvaRate:0, timbre:false, etat:'payee', statut:'payee', support:'', mode:'Fonds du fondateur',
+        origine:'avant-creation', periode:'avant', fournisseur:'', notes:val('avNote'),
+        saisiPar:ME.nom, createdAt:new Date().toISOString()});
+    } else if(type==='apport'){
+      const dest=val('avDest');
+      DB.apports.push({id:uid('ap'), associeId:f.id, date:d, montant:mt, nature:val('avCat')||'Apport en numéraire',
+        mode:'Espèces', reference:'', destination:dest, periode:'avant', note:lib+(val('avNote')?' · '+val('avNote'):''),
+        saisiPar:ME.nom, createdAt:new Date().toISOString()});
+      if(dest) DB.paiements.push({id:uid('pay'), type:'apport', refId:f.id, sens:'entree', montant:mt, date:d,
+        mode:'Espèces', banqueId:dest.startsWith('b:')?dest.slice(2):'', caisseId:dest.startsWith('c:')?dest.slice(2):'',
+        note:'Apport avant création', saisiPar:ME.nom, createdAt:new Date().toISOString()});
+    } else if(type==='emprunt'){
+      DB.credits.push({id:uid('k'), intitule:lib, type:val('avType')||'prive', preteur:val('avTiers'),
+        personne:'pp', montant:mt, dureeAnnees:N(val('avDuree'))||1, taux:0, periodicite:'mensuelle',
+        modeEcheancier:'libre', dateDebut:d, statut:'en_cours', dejaRegle:N(val('avRegle')), fondsRecus:true,
+        usage:'Fonds de roulement', compteReception:'', notes:'Contracté avant la création · '+val('avNote'),
+        saisiPar:ME.nom, createdAt:new Date().toISOString()});
+    } else {
+      DB.revenus.push({id:uid('rv'), libelle:lib, type:val('avCat')||'Prestation', projetId:'', clientId:'',
+        periode:'ponctuel', ht:mt, tvaRate:0, date:d, fin:'', acces:0, statut:'encaisse', mode:'Espèces',
+        regleAvant:mt, notes:'Encaissé avant la création · '+val('avNote'),
+        saisiPar:ME.nom, createdAt:new Date().toISOString()});
+    }
+    log('Opération avant création', LIB_AVANT[type][0]+' — '+lib+' — '+fmt(mt,0));
+    save(); closeModal(); toast('Enregistré — part du fondateur mise à jour'); go('avant');
+  }, true);
+}
+
 /* =========================================================
    CONTRIBUTION HISTORIQUE D'ISKANDER — réservée au CEO
    Ce qu'il a mobilisé pour la société, distinct de ce qui reste à rembourser.
@@ -4484,8 +4647,12 @@ function contributionHistorique(){
   // 5. apports personnels enregistrés
   const apports=apportsDe(f.id);
   const mtApports=apports.reduce((s,a)=>s+N(a.montant),0);
+  // 4 bis. revenus encaissés avant la création : ils sont passés par ses mains
+  const revAvant=DB.revenus.filter(r=>periodeDe(r.date)==='avant');
+  const mtRevAvant=revAvant.reduce((s,r)=>s+N(r.ht),0);
   const lignes=[
     {l:'Dépenses financées avant création', v:mtAvant, n:avant.length, d:'charge(s) engagée(s) avant l\'ouverture'},
+    {l:'Revenus encaissés avant création', v:mtRevAvant, n:revAvant.length, d:'recette(s) avant l\'ouverture'},
     {l:'Emprunts mobilisés auprès de personnes', v:mtEmprunts, n:emprunts.length, d:'prêteur(s)'},
     {l:'Crédits bancaires mobilisés', v:mtCredits, n:credits.length, d:'contrat(s)'},
     {l:'Revenus des projets clôturés', v:mtK2G, n:projClos.length, d:'projet(s)'},
@@ -4636,6 +4803,71 @@ function supprimerOperation(coll, id){
     log('Opération supprimée', (LIB_OPERATION[o.type]||o.type)+' — '+fmt(o.montant));
     save(); toast('Opération supprimée · Caisse Totale recalculée'); go(VIEW,CUR);
   });
+}
+
+
+/* =========================================================
+   PROVISION D'ÉCHÉANCES — régler plusieurs mois d'avance
+   ========================================================= */
+function provisionner(cid){
+  const cr=DB.credits.find(x=>x.id===cid); if(!cr) return;
+  const E=echeancesDe('credit',cid).filter(e=>statutEcheance(e)!=='payee');
+  if(!E.length) return toast('Aucune échéance à provisionner','no');
+  const comptes=DB.banques.map(b=>({v:'b:'+b.id, l:'Banque — '+b.nom}))
+    .concat(DB.caisses.map(c=>({v:'c:'+c.id, l:'Caisse — '+c.nom})));
+  modal('Provisionner des échéances — '+cr.intitule,`
+    <p style="margin-top:0; font-size:13.4px">Vous versez à la banque de quoi couvrir plusieurs mois d'avance.
+      Le montant sort de la Caisse Totale en une fois, et les échéances concernées sont marquées réglées.</p>
+    <div class="fg3">
+      <div class="field"><label>Nombre d'échéances à couvrir</label>
+        <input id="pvNb" type="number" min="1" max="${E.length}" value="${Math.min(12,E.length)}" oninput="calcProvision('${cid}')"></div>
+      <div class="field"><label>Date du versement</label><input id="pvDate" type="date" value="${today()}"></div>
+      <div class="field"><label>Payé depuis</label><select id="pvCompte">
+        ${comptes.map(c=>`<option value="${c.v}">${esc(c.l)}</option>`).join('')}</select></div>
+    </div>
+    <div class="field"><label>Référence du versement</label><input id="pvRef" placeholder="N° de virement, de chèque…"></div>
+    <div id="pvCalc" style="background:#F7F9FD;border:1px solid var(--card-line);border-radius:10px;padding:12px 14px;margin-bottom:12px"></div>
+    <div id="pvListe" class="tbl-wrap" style="max-height:30vh"></div>
+  `,'Verser la provision', ()=>{
+    const nb=Math.min(N(val('pvNb')), E.length);
+    if(nb<1) return toast('Indiquez au moins une échéance','no');
+    const L=E.slice(0,nb), tot=L.reduce((s,e)=>s+(N(e.montant)-N(e.paye)),0);
+    const dest=val('pvCompte'), dat=val('pvDate')||today();
+    const ch={id:uid('h'), libelle:'Provision '+nb+' échéance(s) — '+cr.intitule,
+      categorie:'Remboursement de crédit', sousCategorie:'', projetId:'', date:dat, piece:val('pvRef'),
+      fournisseur:cr.preteur||cr.banque||'', ht:tot, tvaRate:0, timbre:false, etat:'payee', statut:'payee',
+      support:dest, mode:'Virement', origine:'automatique', periode:periodeDe(dat),
+      notes:'Échéances '+L[0].num+' à '+L[L.length-1].num+' réglées d\'avance',
+      saisiPar:ME.nom, createdAt:new Date().toISOString()};
+    DB.charges.push(ch);
+    DB.paiements.push({id:uid('pay'), type:'credit', refId:cid, echeanceId:'', sens:'sortie', montant:tot,
+      date:dat, mode:'Virement', banqueId:dest.startsWith('b:')?dest.slice(2):'',
+      caisseId:dest.startsWith('c:')?dest.slice(2):'', reference:val('pvRef'),
+      note:'Provision de '+nb+' échéance(s)', tiers:cr.preteur||cr.banque||'',
+      saisiPar:ME.nom, createdAt:new Date().toISOString()});
+    L.forEach(e=>{ e.paye=N(e.montant); e.provision=dat; });
+    log('Provision versée', cr.intitule+' — '+nb+' échéance(s), '+fmt(tot,0)+' TND');
+    save(); closeModal(); toast(nb+' échéance(s) réglées d\'avance'); go(VIEW,CUR);
+  }, true);
+  calcProvision(cid);
+}
+function calcProvision(cid){
+  const el=$('pvCalc'), li=$('pvListe'); if(!el) return;
+  const cr=DB.credits.find(x=>x.id===cid);
+  const E=echeancesDe('credit',cid).filter(e=>statutEcheance(e)!=='payee');
+  const nb=Math.max(1, Math.min(N(val('pvNb'))||1, E.length));
+  const L=E.slice(0,nb), tot=L.reduce((s,e)=>s+(N(e.montant)-N(e.paye)),0);
+  const T=tresorerie();
+  el.innerHTML=`<div class="row" style="justify-content:space-between"><span>${nb} échéance(s), de ${dt(L[0].date)} à ${dt(L[L.length-1].date)}</span>
+      <b class="num">${fmt(tot)} TND</b></div>
+    <div class="row" style="justify-content:space-between"><span>Caisse Totale après versement</span>
+      <b class="num ${T.solde-tot>=0?'pos':'neg'}">${fmt(T.solde,0)} → ${fmt(T.solde-tot,0)} TND</b></div>
+    <div class="row" style="justify-content:space-between"><span>Restera dû après cette provision</span>
+      <b class="num">${fmt(resteCredit(cr)-tot,0)} TND</b></div>
+    ${T.solde-tot<0?`<div class="mini neg" style="margin-top:6px">Attention : la trésorerie deviendrait négative.</div>`:''}`;
+  li.innerHTML=`<table><thead><tr><th>N°</th><th>Échéance</th><th class="n">Montant</th></tr></thead><tbody>
+    ${L.map(e=>`<tr><td>${esc(e.num)}</td><td>${dt(e.date)}</td><td class="n">${fmt(e.montant)}</td></tr>`).join('')}
+  </tbody></table>`;
 }
 
 /* =========================================================
