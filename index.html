@@ -310,7 +310,7 @@ code.k{background:#F0F2F7; padding:2px 6px; border-radius:5px; font-size:12px; c
 /* =========================================================
    MULTIPAY — Système interne (100% local, hors-ligne)
    ========================================================= */
-const VERSION='2026.09.28';
+const VERSION='2026.09.29';
 const LOGO = (s=34)=>`<svg width="${s}" height="${s}" viewBox="0 0 44 44" fill="none" aria-label="Multipay">
 <defs><linearGradient id="mpg${s}" x1="4" y1="40" x2="40" y2="4">
 <stop offset="0" stop-color="#00D392"/><stop offset="1" stop-color="#6C5CE7"/></linearGradient></defs>
@@ -621,8 +621,10 @@ const TYPES_CREDIT={bancaire:'Crédit bancaire', prive:'Emprunt auprès d\'une p
 const PERIODICITES={mensuelle:['Mensuelle',12], trimestrielle:['Trimestrielle',4], semestrielle:['Semestrielle',2], annuelle:['Annuelle',1]};
 const freqDe = cr => (PERIODICITES[cr.periodicite]||PERIODICITES.mensuelle)[1];
 // Reprise des crédits saisis avant la correction du formulaire : périodicité mensuelle par défaut.
-DB.credits.forEach(c=>{ if(!PERIODICITES[c.periodicite]) c.periodicite='mensuelle';
-  if(c.periode!=='avant' && c.periode!=='apres') delete c.periode; });
+try{
+  (DB.credits||[]).forEach(c=>{ if(!PERIODICITES[c.periodicite]) c.periodicite='mensuelle';
+    if(c.periode!=='avant' && c.periode!=='apres') delete c.periode; });
+}catch(e){ console.warn('reprise des crédits ignorée', e); }
 const nbEcheances = cr => Math.round(N(cr.dureeAnnees)*freqDe(cr));
 function mensualiteCredit(cr){
   if(N(cr.mensualite)>0) return N(cr.mensualite);
@@ -8452,7 +8454,22 @@ if('serviceWorker' in navigator && location.protocol!=='file:'){
 }
 
 /* ---------- Démarrage ---------- */
-initLogin();
+/* Filet de sécurité : même si une reprise de données échoue, la connexion doit rester possible. */
+try{
+  initLogin();
+}catch(err){
+  console.error('Démarrage', err);
+  const z=document.getElementById('loginErr');
+  if(z){ z.textContent='Le système a rencontré un incident au démarrage ('+err.message+'). '+
+    'Utilisez le bouton ci-dessous pour repartir sur une base saine ; vos données du classeur partagé seront récupérées ensuite.';
+    z.classList.remove('hidden'); }
+  const b=document.getElementById('btnLogin');
+  if(b){ b.textContent='Réparer et recharger';
+    b.onclick=()=>{ try{ localStorage.removeItem('multipay_db_v1'); }catch(e){}
+      location.reload(); }; }
+  const v=document.getElementById('verLogin');
+  if(v) v.textContent='version '+VERSION+' — incident au démarrage';
+}
 </script>
 </body>
 </html>

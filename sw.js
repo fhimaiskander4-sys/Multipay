@@ -1,6 +1,6 @@
 /* Multipay — service worker : l'application reste utilisable hors connexion.
    À chaque nouvelle version du fichier index.html, changez le numéro ci-dessous. */
-const VERSION = 'multipay-v31';
+const VERSION = 'multipay-v32';
 const FICHIERS = [
   './', './index.html', './manifest.webmanifest',
   './icon-192.png', './icon-512.png', './icon-maskable-512.png',
