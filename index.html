@@ -310,7 +310,7 @@ code.k{background:#F0F2F7; padding:2px 6px; border-radius:5px; font-size:12px; c
 /* =========================================================
    MULTIPAY — Système interne (100% local, hors-ligne)
    ========================================================= */
-const VERSION='2026.09.25';
+const VERSION='2026.09.27';
 const LOGO = (s=34)=>`<svg width="${s}" height="${s}" viewBox="0 0 44 44" fill="none" aria-label="Multipay">
 <defs><linearGradient id="mpg${s}" x1="4" y1="40" x2="40" y2="4">
 <stop offset="0" stop-color="#00D392"/><stop offset="1" stop-color="#6C5CE7"/></linearGradient></defs>
@@ -412,6 +412,8 @@ if(!Array.isArray(DB.users) || !DB.users.length) DB.users=seed().users;
 if(!DB.societe.locaux) DB.societe.locaux=['Tunis — El Ghazela','Nabeul','Siège / commun'];
 if(!DB.societe.debutActivite) DB.societe.debutActivite='2025-09-01';
 if(!DB.societe.dateCreation) DB.societe.dateCreation='';
+DB.credits.forEach(c=>{ if(!PERIODICITES[c.periodicite]) c.periodicite='mensuelle';
+  if(c.periode!=='avant' && c.periode!=='apres') delete c.periode; });
 if(!DB.societe.timbre) DB.societe.timbre=1.000;
 if(!DB.societe.tauxIS) DB.societe.tauxIS=15;
 if(!DB.societe.valorisation) DB.societe.valorisation={ montant:147500, date:'2026-07-31',
@@ -3374,7 +3376,8 @@ function formCredit(id){
     </div>
     <div class="fg3">
       <div class="field"><label>Périodicité de remboursement *</label><select id="kPeriode" onchange="calcCredit()">
-        ${Object.entries(PERIODICITES).map(([k,v])=>`<option value="${k}" ${c&&c.periodicite===k?'selected':(!c&&k==='mensuelle'?'selected':'')}>${v[0]}</option>`).join('')}</select></div>
+        ${Object.entries(PERIODICITES).map(([k,v])=>`<option value="${k}" ${((c&&c.periodicite)||'mensuelle')===k?'selected':''}>${v[0]}</option>`).join('')}</select>
+        <div class="mini" style="margin-top:5px">Mensuelle par défaut. Vous pourrez régler plusieurs mois d'avance ou solder par anticipation depuis la fiche.</div></div>
       <div class="field"><label>Taux d'intérêt annuel (%)</label><input id="kTaux" type="number" step="0.01" value="${c?c.taux:0}" oninput="calcCredit()"></div>
       <div class="field"><label>Montant fixe par échéance (facultatif)</label><input id="kMens" type="number" step="0.001" value="${c?(c.mensualite||''):''}" oninput="calcCredit()"></div>
     </div>
@@ -3406,8 +3409,8 @@ function formCredit(id){
         <option value="">— Non affecté (n'entre pas en caisse) —</option>
         ${DB.banques.map(b=>`<option value="b:${b.id}" ${c&&c.compteReception==='b:'+b.id?'selected':''}>Banque — ${esc(b.nom)}</option>`).join('')}
         ${DB.caisses.map(x=>`<option value="c:${x.id}" ${c&&c.compteReception==='c:'+x.id?'selected':''}>Caisse — ${esc(x.nom)}</option>`).join('')}</select></div>
-      <div class="field"><label>Période juridique</label><select id="kPeriode">
-        <option value="apres" ${c&&(c.periode||periodeDe(c.dateDebut))==='apres'?'selected':''}>Après création</option>
+      <div class="field"><label>Période juridique</label><select id="kPeriodeJur">
+        <option value="apres" ${!c||(c.periode||periodeDe(c.dateDebut))==='apres'?'selected':''}>Après création</option>
         <option value="avant" ${c&&(c.periode||periodeDe(c.dateDebut))==='avant'?'selected':''}>Avant création</option></select></div>
     </div>
     <div class="fg3">
@@ -3433,14 +3436,14 @@ function formCredit(id){
     if((fdr||mat) && Math.abs(mt-(fdr+mat))>0.5)
       return toast('La part fonds de roulement et la part matériel doivent totaliser '+fmt(mt,0)+' TND','no');
     const o={intitule:nom, type:val('kType'), banqueId:val('kBanque'), preteur:val('kPreteur'), personne:val('kPers'),
-      montant:mt, dureeAnnees:du, periodicite:val('kPeriode'), taux:N(val('kTaux')), mensualite:N(val('kMens')),
+      montant:mt, dureeAnnees:du, periodicite:val('kPeriode')||'mensuelle', taux:N(val('kTaux')), mensualite:N(val('kMens')),
       dejaRegle:N(val('kDeja')), fondsRecus:val('kFonds')==='1', jourPrelevement:N(val('kJour')),
       usage:val('kUsage'), garantie:(c&&c.garantie)||'',
       partFdr:N(val('kFdr')), partMateriel:N(val('kMat')), fournisseurMateriel:val('kFourn'),
       prelevementAuto:checked('kAuto'), comptePrelevement:val('kCompte'),
       listeMateriel:val('kListe'),
       modeEcheancier:val('kMode'), moyenReception:val('kMoyen'), compteReception:val('kCompte'),
-      periode:val('kPeriode'),
+      periode:val('kPeriodeJur')||'apres',
       dateDebut:val('kDeb'), garantie:val('kGar'), statut:val('kStat'), notes:val('kNotes')};
     let cr;
     if(c){ Object.assign(c,o); cr=c; } else { cr=Object.assign({id:uid('k'), saisiPar:ME.nom, createdAt:new Date().toISOString()},o); DB.credits.push(cr); }
@@ -3492,7 +3495,7 @@ function calcCredit(){
       Le montant total de ${fmt(mt,0)} TND reste suivi dans Crédits et emprunts.`; }
   const el=$('kCalc'); if(!el) return;
   const cr={montant:N(val('kMontant')), dureeAnnees:N(val('kDuree')), taux:N(val('kTaux')), mensualite:N(val('kMens')),
-    periodicite:val('kPeriode'), dejaRegle:N(val('kDeja'))};
+    periodicite:val('kPeriode')||'mensuelle', dejaRegle:N(val('kDeja'))};
   const m=mensualiteCredit(cr), tot=totalCredit(cr), cout=tot-N(cr.montant), n=nbEcheances(cr);
   const reste=Math.max(0,tot-N(cr.dejaRegle));
   const lib=(PERIODICITES[cr.periodicite]||PERIODICITES.mensuelle)[0].toLowerCase();
@@ -4479,16 +4482,19 @@ function apercuCaisse(prefixe){
 /* =========================================================
    AVANT CRÉATION — tout ce qu'Iskander a mobilisé avant l'ouverture
    ========================================================= */
-function estAvant(d){ return periodeDe(d)==='avant'; }
+function estAvant(d, o){
+  if(o && o.periode) return o.periode==='avant';     // marquage explicite : fait foi
+  return periodeDe(d)==='avant';
+}
 function operationsAvant(){
-  const dep=DB.charges.filter(c=>chargeReelle(c) && estAvant(c.date))
+  const dep=DB.charges.filter(c=>chargeReelle(c) && estAvant(c.date, c))
     .map(c=>({t:'depense', id:c.id, coll:'charges', date:c.date, lib:c.libelle, cat:c.categorie, mt:N(c.ht)}));
-  const rev=DB.revenus.filter(r=>estAvant(r.date))
+  const rev=DB.revenus.filter(r=>estAvant(r.date, r))
     .map(r=>({t:'revenu', id:r.id, coll:'revenus', date:r.date, lib:r.libelle, cat:r.type, mt:N(r.ht)}));
-  const ap=DB.apports.filter(a=>estAvant(a.date))
+  const ap=DB.apports.filter(a=>estAvant(a.date, a))
     .map(a=>({t:'apport', id:a.id, coll:'apports', date:a.date, lib:a.nature||'Apport personnel',
       cat:(DB.associes.find(x=>x.id===a.associeId)||{}).nom||'', mt:N(a.montant)}));
-  const emp=DB.credits.filter(c=>c.type!=='pret' && estAvant(c.dateDebut))
+  const emp=DB.credits.filter(c=>c.type!=='pret' && estAvant(c.dateDebut, c))
     .map(c=>({t:'emprunt', id:c.id, coll:'credits', date:c.dateDebut, lib:c.intitule,
       cat:c.preteur||c.banque||'', mt:N(c.montant), reste:resteCredit(c)}));
   const L=dep.concat(rev,ap,emp).sort((a,b)=>(b.date||'').localeCompare(a.date||''));
@@ -4523,6 +4529,18 @@ function vAvant(){
       </div>
     </div></div>
 
+  ${!dc?`<div class="card" style="margin-bottom:14px; border-color:#FFE2C2; background:#FFFDF8">
+    <div class="card-b">
+      <b>Renseignez d'abord la date de création de la société</b>
+      <p class="mini" style="margin:6px 0 12px">Sans cette date, le système ne sait pas séparer ce qui s'est passé avant
+        de ce qui s'est passé après. Les opérations saisies ici resteront rattachées à la période « avant » quoi qu'il arrive,
+        mais le reste du système a besoin de ce repère.</p>
+      <div class="row" style="gap:10px; align-items:flex-end">
+        <div class="field" style="margin:0"><label>Date de création juridique</label>
+          <input id="dcRapide" type="date" value=""></div>
+        <button class="btn btn-primary" onclick="fixerDateCreation()">Enregistrer la date</button>
+      </div>
+    </div></div>`:''}
   <div class="toolbar">
     ${peut('credits')?`<button class="btn btn-primary btn-sm" onclick="formAvant('depense')">+ Dépense payée avant</button>`:''}
     ${peut('credits')?`<button class="btn btn-primary btn-sm" onclick="formAvant('apport')">+ Argent personnel</button>
@@ -4558,6 +4576,13 @@ function vAvant(){
         avant l'ouverture des comptes.</span></div>
     ${isCEO()?`<button class="btn btn-ghost btn-sm" style="margin-top:10px" onclick="go('contribution')">Voir la contribution consolidée</button>`:''}
   </div></div>`;
+}
+function fixerDateCreation(){
+  const d=val('dcRapide');
+  if(!d) return toast('Choisissez une date','no');
+  DB.societe.dateCreation=d; DB.metaMaj=new Date().toISOString();
+  log('Date de création renseignée', d); save();
+  toast('Date de création enregistrée — les opérations se répartissent maintenant'); go('avant');
 }
 function formAvant(type){
   const dc=DB.societe.dateCreation;
@@ -4603,7 +4628,7 @@ function formAvant(type){
   `,'Enregistrer', ()=>{
     const lib=val('avLib'), mt=N(val('avMt')), d=val('avDate');
     if(!lib||!mt||!d) return toast('Libellé, montant et date sont obligatoires','no');
-    if(dc && d>=dc) return toast('Cette date est postérieure à la création de la société','no');
+    if(dc && d>=dc) return toast('Cette date est postérieure au '+dt(dc)+', date de création de la société','no');
     const f=associeFondateur();
     if(type==='depense'){
       DB.charges.push({id:uid('h'), libelle:lib, categorie:val('avCat')||'Divers', sousCategorie:'', projetId:'',
@@ -4622,11 +4647,12 @@ function formAvant(type){
       DB.credits.push({id:uid('k'), intitule:lib, type:val('avType')||'prive', preteur:val('avTiers'),
         personne:'pp', montant:mt, dureeAnnees:N(val('avDuree'))||1, taux:0, periodicite:'mensuelle',
         modeEcheancier:'libre', dateDebut:d, statut:'en_cours', dejaRegle:N(val('avRegle')), fondsRecus:true,
-        usage:'Fonds de roulement', compteReception:'', notes:'Contracté avant la création · '+val('avNote'),
+        usage:'Fonds de roulement', compteReception:'', periode:'avant',
+        notes:'Contracté avant la création · '+val('avNote'),
         saisiPar:ME.nom, createdAt:new Date().toISOString()});
     } else {
       DB.revenus.push({id:uid('rv'), libelle:lib, type:val('avCat')||'Prestation', projetId:'', clientId:'',
-        periode:'ponctuel', ht:mt, tvaRate:0, date:d, fin:'', acces:0, statut:'encaisse', mode:'Espèces',
+        periode:'avant', periodicite:'ponctuel', ht:mt, tvaRate:0, date:d, fin:'', acces:0, statut:'encaisse', mode:'Espèces',
         regleAvant:mt, notes:'Encaissé avant la création · '+val('avNote'),
         saisiPar:ME.nom, createdAt:new Date().toISOString()});
     }
@@ -4645,7 +4671,7 @@ function associeFondateur(){
 function contributionHistorique(){
   const f=associeFondateur();
   // 1. dépenses engagées avant la création : financées par le fondateur
-  const avant=DB.charges.filter(c=>chargeReelle(c) && (c.periode||periodeDe(c.date))==='avant');
+  const avant=DB.charges.filter(c=>chargeReelle(c) && estAvant(c.date, c));
   const mtAvant=avant.reduce((s,c)=>s+N(c.ht),0);
   // 2. emprunts mobilisés auprès de personnes
   const emprunts=DB.credits.filter(c=>c.type==='prive');
@@ -4660,7 +4686,7 @@ function contributionHistorique(){
   const apports=apportsDe(f.id);
   const mtApports=apports.reduce((s,a)=>s+N(a.montant),0);
   // 4 bis. revenus encaissés avant la création : ils sont passés par ses mains
-  const revAvant=DB.revenus.filter(r=>periodeDe(r.date)==='avant');
+  const revAvant=DB.revenus.filter(r=>estAvant(r.date, r));
   const mtRevAvant=revAvant.reduce((s,r)=>s+N(r.ht),0);
   const lignes=[
     {l:'Dépenses financées avant création', v:mtAvant, n:avant.length, d:'charge(s) engagée(s) avant l\'ouverture'},
