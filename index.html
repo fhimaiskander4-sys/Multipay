@@ -310,7 +310,7 @@ code.k{background:#F0F2F7; padding:2px 6px; border-radius:5px; font-size:12px; c
 /* =========================================================
    MULTIPAY — Système interne (100% local, hors-ligne)
    ========================================================= */
-const VERSION='2026.09.27';
+const VERSION='2026.09.28';
 const LOGO = (s=34)=>`<svg width="${s}" height="${s}" viewBox="0 0 44 44" fill="none" aria-label="Multipay">
 <defs><linearGradient id="mpg${s}" x1="4" y1="40" x2="40" y2="4">
 <stop offset="0" stop-color="#00D392"/><stop offset="1" stop-color="#6C5CE7"/></linearGradient></defs>
@@ -412,8 +412,7 @@ if(!Array.isArray(DB.users) || !DB.users.length) DB.users=seed().users;
 if(!DB.societe.locaux) DB.societe.locaux=['Tunis — El Ghazela','Nabeul','Siège / commun'];
 if(!DB.societe.debutActivite) DB.societe.debutActivite='2025-09-01';
 if(!DB.societe.dateCreation) DB.societe.dateCreation='';
-DB.credits.forEach(c=>{ if(!PERIODICITES[c.periodicite]) c.periodicite='mensuelle';
-  if(c.periode!=='avant' && c.periode!=='apres') delete c.periode; });
+
 if(!DB.societe.timbre) DB.societe.timbre=1.000;
 if(!DB.societe.tauxIS) DB.societe.tauxIS=15;
 if(!DB.societe.valorisation) DB.societe.valorisation={ montant:147500, date:'2026-07-31',
@@ -621,6 +620,9 @@ const TYPES_CREDIT={bancaire:'Crédit bancaire', prive:'Emprunt auprès d\'une p
   leasing:'Leasing / LOA', decouvert:'Facilité de caisse'};
 const PERIODICITES={mensuelle:['Mensuelle',12], trimestrielle:['Trimestrielle',4], semestrielle:['Semestrielle',2], annuelle:['Annuelle',1]};
 const freqDe = cr => (PERIODICITES[cr.periodicite]||PERIODICITES.mensuelle)[1];
+// Reprise des crédits saisis avant la correction du formulaire : périodicité mensuelle par défaut.
+DB.credits.forEach(c=>{ if(!PERIODICITES[c.periodicite]) c.periodicite='mensuelle';
+  if(c.periode!=='avant' && c.periode!=='apres') delete c.periode; });
 const nbEcheances = cr => Math.round(N(cr.dureeAnnees)*freqDe(cr));
 function mensualiteCredit(cr){
   if(N(cr.mensualite)>0) return N(cr.mensualite);
