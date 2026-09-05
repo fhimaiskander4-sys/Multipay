@@ -310,7 +310,7 @@ code.k{background:#F0F2F7; padding:2px 6px; border-radius:5px; font-size:12px; c
 /* =========================================================
    MULTIPAY — Système interne (100% local, hors-ligne)
    ========================================================= */
-const VERSION='2026.09.24';
+const VERSION='2026.09.25';
 const LOGO = (s=34)=>`<svg width="${s}" height="${s}" viewBox="0 0 44 44" fill="none" aria-label="Multipay">
 <defs><linearGradient id="mpg${s}" x1="4" y1="40" x2="40" y2="4">
 <stop offset="0" stop-color="#00D392"/><stop offset="1" stop-color="#6C5CE7"/></linearGradient></defs>
@@ -651,7 +651,7 @@ function statutCredit(cr){
   if(rem<=0.0005) return 'non_entame';
   return rem+0.0005>=tot? 'solde':'en_cours';
 }
-const LIB_STATUT_CREDIT={attente:['Fonds non encore retirés','t-blue'], non_entame:['Non entamé','t-gray'],
+const LIB_STATUT_CREDIT={solde:['Soldé','t-green'],attente:['Fonds non encore retirés','t-blue'], non_entame:['Non entamé','t-gray'],
   en_cours:['En cours','t-amber'], solde:['Soldé','t-green']};
 const echeancesDe = (type,ref) => DB.echeances.filter(e=>e.type===type && e.refId===ref).sort((a,b)=>a.date.localeCompare(b.date));
 function statutEcheance(e){
@@ -1484,6 +1484,8 @@ function doLogin(){
   buildNav(); go('dash'); resnap(); setSyncState(SYNC.url?'ok':'off');
   if(SYNC.url && SYNC.auto) setTimeout(()=>syncNow(true),1200);
   if(usr.defaut) forcerChangementMdp();
+  setTimeout(()=>{ const r=appliquerPrelevements(true);
+    if(r.n) toast(r.n+' échéance(s) prélevée(s) automatiquement — '+fmt(r.total,0)+' TND'); }, 1200);
 }
 function forcerChangementMdp(){
   modal('Sécurité — changement de mot de passe obligatoire',`
@@ -1516,6 +1518,7 @@ function surveillerSession(){
 setInterval(surveillerSession, 60000);
 ['click','keydown'].forEach(ev=>document.addEventListener(ev, ()=>{ derniereActivite=Date.now(); }));
 async function rafraichir(){
+  appliquerPrelevements(true);
   if(SYNC.url){ await syncNow(false); }
   DB=store.read()||DB; resnap(); go(VIEW,CUR); buildNav();
   toast('Écran actualisé');
@@ -1558,7 +1561,7 @@ const MENU=[
   {g:'Direction', items:[
     {id:'rapports', ic:'▧', t:'Rapports', mod:'dashboard'},
     {id:'associes', ic:'♟', t:'Associés & capital', mod:'associes'},
-    {id:'avant', ic:'⧗', t:'Avant création', mod:'admin'},
+    {id:'avant', ic:'⧗', t:'Avant création', mod:'credits'},
     {id:'contribution', ic:'★', t:'Contribution historique', mod:'admin'},
     {id:'valorisation', ic:'◆', t:'Valeur de la société', mod:'valorisation'},
     {id:'admin', ic:'⚙', t:'Sécurité & suivi', mod:'admin'},
@@ -3321,7 +3324,8 @@ function vCredits(){
         return `<tr><td><b>${esc(c.intitule)}</b><div class="mini">${c.dateDebut?'depuis le '+dt(c.dateDebut):''}${c.taux?' · taux '+c.taux+' %':''}</div></td>
         <td><span class="tag ${c.type==='pret'?'t-blue':c.type==='prive'?'t-violet':'t-amber'}">${TYPES_CREDIT[c.type]||c.type}</span></td>
         <td>${esc(c.preteur||c.banque||'—')}
-          <div class="mini">${c.personne==='pm'?'personne morale':'personne physique'}${c.usage?' · '+esc(c.usage):''}</div></td>
+          <div class="mini">${c.personne==='pm'?'personne morale':'personne physique'}${c.usage?' · '+esc(c.usage):''}
+            ${c.prelevementAuto?' · <span class="pos">prélèvement auto</span>':''}</div></td>
         <td class="n">${fmt(c.montant,0)}<div class="mini">${c.dureeAnnees} an(s) · ${nbEcheances(c)} × ${(PERIODICITES[c.periodicite]||PERIODICITES.mensuelle)[0].toLowerCase()}</div></td>
         <td class="n pos">${fmt(partEncaissee(c),0)}</td>
         <td class="n">${partMaterielle(c)?fmt(partMaterielle(c),0):'—'}${partMaterielle(c)?`<div class="mini">hors caisse</div>`:''}</td>
@@ -3332,7 +3336,8 @@ function vCredits(){
           ${retard?`<div class="mini neg">${retard} échéance(s) en retard</div>`:''}</td>
         <td class="n" style="white-space:nowrap">
           <button class="btn btn-ghost btn-sm" onclick="voirCredit('${c.id}')">Détail</button>
-          ${can('finance')&&c.type!=='pret'?`<button class="btn btn-ghost btn-sm" onclick="provisionner('${c.id}')">Provisionner</button>`:''}
+          ${can('finance')&&c.type!=='pret'?`<button class="btn btn-ghost btn-sm" onclick="provisionner('${c.id}')">Provisionner</button>
+            <button class="btn btn-ghost btn-sm" onclick="solderCredit('${c.id}')">Solder</button>`:''}
           <button class="btn btn-ghost btn-sm" onclick="voirEcheancier('${c.id}')">Tranches</button>
           ${can('finance')?`<button class="btn btn-mint btn-sm" onclick="formPaiement('credit','${c.id}')">Payer</button>
           <button class="btn btn-ghost btn-sm" onclick="formCredit('${c.id}')">Modifier</button>
@@ -3410,6 +3415,11 @@ function formCredit(id){
       <div class="field"><label>Part matériel (n'entre pas en caisse)</label><input id="kMat" type="number" step="0.001" value="${c?(c.partMateriel||''):''}" oninput="calcCredit()"></div>
       <div class="field"><label>Fournisseur du matériel</label><input id="kFourn" value="${esc(c?(c.fournisseurMateriel||''):'')}"></div>
     </div>
+    <label style="display:flex; gap:8px; align-items:center; font-size:13.4px; margin-bottom:12px;
+      background:#F3FCF8; border:1px solid #B9F0DA; border-radius:10px; padding:11px 13px">
+      <input type="checkbox" id="kAuto" ${c&&c.prelevementAuto?'checked':''}>
+      <span><b>Prélèvement automatique chaque mois</b> — l'échéance est retirée du compte à sa date,
+        sans saisie. Vous gardez la main pour provisionner plusieurs mois d'avance ou solder par anticipation.</span></label>
     <div class="field"><label>Matériel financé (un par ligne : désignation, prix)</label>
       <textarea id="kListe" rows="3" placeholder="Ordinateur portable, 2300&#10;Imprimante, 700">${esc(c?(c.listeMateriel||''):'')}</textarea></div>
     <div id="kCalc" style="background:#F7F9FD;border:1px solid var(--card-line);border-radius:10px;padding:12px 14px;margin-bottom:14px"></div>
@@ -3427,6 +3437,7 @@ function formCredit(id){
       dejaRegle:N(val('kDeja')), fondsRecus:val('kFonds')==='1', jourPrelevement:N(val('kJour')),
       usage:val('kUsage'), garantie:(c&&c.garantie)||'',
       partFdr:N(val('kFdr')), partMateriel:N(val('kMat')), fournisseurMateriel:val('kFourn'),
+      prelevementAuto:checked('kAuto'), comptePrelevement:val('kCompte'),
       listeMateriel:val('kListe'),
       modeEcheancier:val('kMode'), moyenReception:val('kMoyen'), compteReception:val('kCompte'),
       periode:val('kPeriode'),
@@ -3668,6 +3679,7 @@ function voirEcheancier(id){
   modal('Échéancier — '+c.intitule, `
     ${can('finance')?`<div class="row" style="margin-bottom:14px">
       <button class="btn btn-mint btn-sm" onclick="provisionner('${id}')">Régler plusieurs mois d'avance</button>
+      <button class="btn btn-ghost btn-sm" onclick="solderCredit('${id}')">Solder par anticipation</button>
       <button class="btn btn-primary btn-sm" onclick="definirTranches('${id}')">Définir les tranches convenues</button>
       <button class="btn btn-ghost btn-sm" onclick="ajouterEcheance('${id}')">+ Ajouter une échéance</button>
       ${c.modeEcheancier!=='libre'?`<button class="btn btn-ghost btn-sm" onclick="regenererEcheancier('${id}')">Régénérer l'échéancier automatique</button>`:''}
@@ -4488,8 +4500,8 @@ function operationsAvant(){
 const LIB_AVANT={depense:['Dépense financée','t-red'], revenu:['Revenu encaissé','t-green'],
   apport:['Argent personnel apporté','t-violet'], emprunt:['Emprunt mobilisé','t-amber']};
 function vAvant(){
-  if(!isCEO()) return `<div class="card"><div class="empty"><b>Accès réservé</b>
-    Cette vue est réservée à la direction générale.</div></div>`;
+  if(!voit('credits')) return `<div class="card"><div class="empty"><b>Accès non autorisé</b>
+    Demandez l'ouverture de ce module à la direction générale.</div></div>`;
   const A=operationsAvant(), f=associeFondateur();
   const dc=DB.societe.dateCreation;
   return `<div class="card" style="margin-bottom:14px; background:linear-gradient(135deg,#0F1830,#1B2A55); border:0; color:#fff">
@@ -4512,10 +4524,10 @@ function vAvant(){
     </div></div>
 
   <div class="toolbar">
-    <button class="btn btn-primary btn-sm" onclick="formAvant('depense')">+ Dépense payée avant</button>
-    <button class="btn btn-primary btn-sm" onclick="formAvant('apport')">+ Argent personnel</button>
+    ${peut('credits')?`<button class="btn btn-primary btn-sm" onclick="formAvant('depense')">+ Dépense payée avant</button>`:''}
+    ${peut('credits')?`<button class="btn btn-primary btn-sm" onclick="formAvant('apport')">+ Argent personnel</button>
     <button class="btn btn-primary btn-sm" onclick="formAvant('emprunt')">+ Emprunt contracté</button>
-    <button class="btn btn-ghost btn-sm" onclick="formAvant('revenu')">+ Revenu encaissé</button>
+    <button class="btn btn-ghost btn-sm" onclick="formAvant('revenu')">+ Revenu encaissé</button>`:''}
     <span class="mini">${dc? 'Société créée le '+dt(dc) : 'Date de création non renseignée — à saisir dans Sécurité & suivi'}</span>
   </div>
 
@@ -4544,7 +4556,7 @@ function vAvant(){
     <div class="ai-line" style="border-color:var(--card-line); color:var(--txt)"><span class="dot d-blue"></span>
       <span style="flex:1">Les dépenses d'avant création n'entament pas la trésorerie actuelle : elles ont été réglées
         avant l'ouverture des comptes.</span></div>
-    <button class="btn btn-ghost btn-sm" style="margin-top:10px" onclick="go('contribution')">Voir la contribution consolidée</button>
+    ${isCEO()?`<button class="btn btn-ghost btn-sm" style="margin-top:10px" onclick="go('contribution')">Voir la contribution consolidée</button>`:''}
   </div></div>`;
 }
 function formAvant(type){
@@ -4809,6 +4821,75 @@ function supprimerOperation(coll, id){
 /* =========================================================
    PROVISION D'ÉCHÉANCES — régler plusieurs mois d'avance
    ========================================================= */
+/* Prélèvement automatique : chaque échéance échue est réglée depuis le compte désigné. */
+function appliquerPrelevements(silencieux){
+  const L=DB.credits.filter(c=>c.prelevementAuto && c.type!=='pret' && c.compteReception);
+  let n=0, total=0;
+  L.forEach(cr=>{
+    echeancesDe('credit',cr.id).forEach(e=>{
+      if(e.date<=today() && statutEcheance(e)!=='payee'){
+        const du=N(e.montant)-N(e.paye);
+        if(du<=0.005) return;
+        const dest=cr.comptePrelevement||cr.compteReception;
+        DB.charges.push({id:uid('h'), libelle:'Échéance '+e.num+' — '+cr.intitule,
+          categorie:'Remboursement de crédit', sousCategorie:'', projetId:'', date:e.date, piece:'',
+          fournisseur:cr.preteur||cr.banque||'', ht:du, tvaRate:0, timbre:false, etat:'payee', statut:'payee',
+          support:dest, mode:'Prélèvement', origine:'automatique', periode:periodeDe(e.date),
+          notes:'Prélèvement automatique', saisiPar:'Système', createdAt:new Date().toISOString()});
+        DB.paiements.push({id:uid('pay'), type:'credit', refId:cr.id, echeanceId:e.id, sens:'sortie',
+          montant:du, date:e.date, mode:'Prélèvement',
+          banqueId:dest.startsWith('b:')?dest.slice(2):'', caisseId:dest.startsWith('c:')?dest.slice(2):'',
+          reference:'', note:'Échéance '+e.num, tiers:cr.preteur||cr.banque||'',
+          saisiPar:'Système', createdAt:new Date().toISOString()});
+        e.paye=N(e.montant); n++; total+=du;
+      }
+    });
+  });
+  if(n){ log('Prélèvements automatiques', n+' échéance(s), '+fmt(total,0)+' TND'); save();
+    if(!silencieux) toast(n+' échéance(s) prélevée(s) automatiquement — '+fmt(total,0)+' TND'); }
+  return {n, total};
+}
+/* Solder un crédit par anticipation : toutes les échéances restantes en une fois. */
+function solderCredit(cid){
+  const cr=DB.credits.find(x=>x.id===cid); if(!cr) return;
+  const E=echeancesDe('credit',cid).filter(e=>statutEcheance(e)!=='payee');
+  const du=E.reduce((s,e)=>s+(N(e.montant)-N(e.paye)),0) || resteCredit(cr);
+  if(du<=0.005) return toast('Ce crédit est déjà soldé','no');
+  const comptes=DB.banques.map(b=>({v:'b:'+b.id,l:'Banque — '+b.nom}))
+    .concat(DB.caisses.map(c=>({v:'c:'+c.id,l:'Caisse — '+c.nom})));
+  const T=tresorerie();
+  modal('Solder par anticipation — '+cr.intitule,`
+    <p style="margin-top:0; font-size:13.4px">Vous réglez d'un coup tout ce qui reste dû. Le crédit passe en soldé
+      et disparaît de vos engagements. La contribution du fondateur, elle, reste inchangée.</p>
+    <div class="fg3">
+      <div class="field"><label>Montant à régler</label><input id="soMt" type="number" step="0.001" value="${du.toFixed(3)}"></div>
+      <div class="field"><label>Date</label><input id="soDate" type="date" value="${today()}"></div>
+      <div class="field"><label>Payé depuis</label><select id="soCompte">
+        ${comptes.map(c=>`<option value="${c.v}">${esc(c.l)}</option>`).join('')}</select></div>
+    </div>
+    <div class="field"><label>Référence</label><input id="soRef"></div>
+    <div style="background:#F7F9FD;border:1px solid var(--card-line);border-radius:10px;padding:12px 14px">
+      <div class="row" style="justify-content:space-between"><span>${E.length} échéance(s) restante(s)</span><b class="num">${fmt(du)} TND</b></div>
+      <div class="row" style="justify-content:space-between"><span>Caisse Totale après règlement</span>
+        <b class="num ${T.solde-du>=0?'pos':'neg'}">${fmt(T.solde,0)} → ${fmt(T.solde-du,0)} TND</b></div>
+    </div>
+  `,'Solder le crédit', ()=>{
+    const mt=N(val('soMt')), d=val('soDate')||today(), dest=val('soCompte');
+    DB.charges.push({id:uid('h'), libelle:'Solde anticipé — '+cr.intitule, categorie:'Remboursement de crédit',
+      sousCategorie:'', projetId:'', date:d, piece:val('soRef'), fournisseur:cr.preteur||cr.banque||'',
+      ht:mt, tvaRate:0, timbre:false, etat:'payee', statut:'payee', support:dest, mode:'Virement',
+      origine:'automatique', periode:periodeDe(d), notes:E.length+' échéance(s) soldée(s) par anticipation',
+      saisiPar:ME.nom, createdAt:new Date().toISOString()});
+    DB.paiements.push({id:uid('pay'), type:'credit', refId:cid, echeanceId:'', sens:'sortie', montant:mt, date:d,
+      mode:'Virement', banqueId:dest.startsWith('b:')?dest.slice(2):'', caisseId:dest.startsWith('c:')?dest.slice(2):'',
+      reference:val('soRef'), note:'Solde anticipé', tiers:cr.preteur||cr.banque||'',
+      saisiPar:ME.nom, createdAt:new Date().toISOString()});
+    E.forEach(e=>{ e.paye=N(e.montant); e.soldeAnticipe=d; });
+    cr.statut='solde';
+    log('Crédit soldé par anticipation', cr.intitule+' — '+fmt(mt,0)+' TND');
+    save(); closeModal(); toast('Crédit soldé'); go(VIEW,CUR);
+  }, true);
+}
 function provisionner(cid){
   const cr=DB.credits.find(x=>x.id===cid); if(!cr) return;
   const E=echeancesDe('credit',cid).filter(e=>statutEcheance(e)!=='payee');
